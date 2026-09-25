@@ -1,0 +1,66 @@
+# Automated Incident Response Platform
+# Copyright (c) 2025 Bibas Gautam. All rights reserved.
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: irp_user
+      POSTGRES_PASSWORD: irp_password
+      POSTGRES_DB: irp_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - irp_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U irp_user -d irp_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://irp_user:irp_password@db:5432/irp_db
+      JWT_SECRET_KEY: change-this-secret-in-production
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      VITE_API_BASE: http://localhost:8000
+    ports:
+      - "5173:5173"
+
+  # Optional background worker (Celery). Not required for the API to function.
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    profiles: ["worker"]
+    depends_on:
+      - backend
+      - redis
+    environment:
+      DATABASE_URL: postgresql://irp_user:irp_password@db:5432/irp_db
+      REDIS_URL: redis://redis:6379/0
+    command: ["celery", "-A", "app.celery_app.celery_app", "worker", "--beat", "--loglevel=INFO"]
+
+volumes:
+  irp_db_data:
